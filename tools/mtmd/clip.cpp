@@ -624,8 +624,11 @@ ggml_tensor * clip_graph::build_attn(
     if (flash_attn_type == CLIP_FLASH_ATTN_TYPE_ENABLED) {
         ggml_tensor * v = ggml_permute(ctx0, v_cur, 0, 2, 1, 3);
 
-        k = ggml_cast(ctx0, k, GGML_TYPE_F16);
-        v = ggml_cast(ctx0, v, GGML_TYPE_F16);
+        // Experimental Qwen3.5 vision path: keep Q/K/V in BF16 to match the
+        // live MLX attention path more closely for Metal benchmarking.
+        q = ggml_cast(ctx0, q, GGML_TYPE_BF16);
+        k = ggml_cast(ctx0, k, GGML_TYPE_BF16);
+        v = ggml_cast(ctx0, v, GGML_TYPE_BF16);
 
         cur = ggml_flash_attn_ext(ctx0, q, k, v, kq_mask, kq_scale, 0.0f, 0.0f);
         ggml_flash_attn_ext_set_prec(cur, GGML_PREC_F32);
