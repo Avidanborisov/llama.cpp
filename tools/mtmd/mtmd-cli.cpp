@@ -31,6 +31,14 @@
 static volatile bool g_is_generating = false;
 static volatile bool g_is_interrupted = false;
 
+static bool mtmd_encode_only_enabled() {
+    static int enabled = -1;
+    if (enabled < 0) {
+        enabled = std::getenv("MTMD_ENCODE_ONLY") != nullptr ? 1 : 0;
+    }
+    return enabled != 0;
+}
+
 /**
  * Please note that this is NOT a production-ready stuff.
  * It is a playground for trying multimodal support in llama.cpp.
@@ -254,6 +262,31 @@ static int eval_message(mtmd_cli_context & ctx, common_chat_msg & msg) {
 
     ctx.bitmaps.entries.clear();
 
+    if (mtmd_encode_only_enabled()) {
+        size_t n_chunks = chunks.size();
+        LOG_INF("MMTRACE encode_only begin chunks=%zu\n", n_chunks);
+        for (size_t i = 0; i < n_chunks; ++i) {
+            const mtmd_input_chunk * chunk = chunks[i];
+            auto chunk_type = mtmd_input_chunk_get_type(chunk);
+            if (chunk_type != MTMD_INPUT_CHUNK_TYPE_IMAGE) {
+                continue;
+            }
+
+            const mtmd_image_tokens * image_tokens = mtmd_input_chunk_get_tokens_image(chunk);
+            const int nx = (int) mtmd_image_tokens_get_nx(image_tokens);
+            const int ny = (int) mtmd_image_tokens_get_ny(image_tokens);
+            const size_t n_tokens = mtmd_input_chunk_get_n_tokens(chunk);
+
+            LOG_INF("MMTRACE encode_only chunk=%zu type=image tokens=%zu nx=%d ny=%d\n", i, n_tokens, nx, ny);
+            if (mtmd_encode_chunk(ctx.ctx_vision.get(), chunk) != 0) {
+                LOG_ERR("Unable to encode image chunk %zu\n", i);
+                return 1;
+            }
+        }
+        LOG_INF("MMTRACE encode_only end\n");
+        return 0;
+    }
+
     llama_pos new_n_past;
     if (mtmd_helper_eval_chunks(ctx.ctx_vision.get(),
                 ctx.lctx, // lctx
@@ -358,6 +391,9 @@ int main(int argc, char ** argv) {
         }
         if (eval_message(ctx, msg)) {
             return 1;
+        }
+        if (mtmd_encode_only_enabled()) {
+            return 0;
         }
         if (!g_is_interrupted && generate_response(ctx, n_predict)) {
             return 1;

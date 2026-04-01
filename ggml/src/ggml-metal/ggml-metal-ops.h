@@ -25,6 +25,7 @@ void ggml_metal_op_free(ggml_metal_op_t ctx);
 int ggml_metal_op_n_nodes(ggml_metal_op_t ctx);
 
 int ggml_metal_op_encode(ggml_metal_op_t ctx, int idx);
+void ggml_metal_op_trace_log(ggml_metal_op_t ctx);
 
 //
 // available ops:

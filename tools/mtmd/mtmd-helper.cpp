@@ -254,6 +254,7 @@ int32_t mtmd_helper_decode_image_chunk(
     int32_t i_batch = 0;
     int32_t n_img_batches = (n_tokens + n_batch - 1) / n_batch;
     decode_embd_batch batch_embd(encoded_embd, n_tokens, n_pos_per_embd, n_mmproj_embd);
+    const int64_t t_decode_setup_start = ggml_time_ms();
 
     if (mtmd_decode_use_mrope(ctx)) {
         if (chunk_type == MTMD_INPUT_CHUNK_TYPE_IMAGE) {
@@ -273,6 +274,8 @@ int32_t mtmd_helper_decode_image_chunk(
     } else {
         batch_embd.set_position_normal(n_past, seq_id);
     }
+    const int64_t t_decode_setup_done = ggml_time_ms();
+    LOG_INF("MMTRACE decode host setup in %" PRId64 " ms\n", t_decode_setup_done - t_decode_setup_start);
 
     if (mtmd_decode_use_non_causal(ctx)) {
         llama_set_causal_attn(lctx, false);
@@ -287,12 +290,19 @@ int32_t mtmd_helper_decode_image_chunk(
         LOG_INF("decoding %s batch %d/%d, n_tokens_batch = %d\n", name, i_batch+1, n_img_batches, n_tokens_batch);
 
         int64_t t1 = ggml_time_ms();
+        int64_t t_decode_enqueue_start = ggml_time_ms();
         int32_t ret = llama_decode(lctx, batch_embd_view);
+        int64_t t_decode_enqueue_done = ggml_time_ms();
         if (ret != 0) {
             LOG_ERR("failed to decode %s\n", name);
             llama_set_causal_attn(lctx, true); // restore causal attn
             return ret;
         }
+        LOG_INF("MMTRACE decode batch %d/%d host enqueue in %" PRId64 " ms\n", i_batch+1, n_img_batches, t_decode_enqueue_done - t_decode_enqueue_start);
+        int64_t t_decode_sync_start = ggml_time_ms();
+        llama_synchronize(lctx);
+        int64_t t_decode_sync_done = ggml_time_ms();
+        LOG_INF("MMTRACE decode batch %d/%d gpu sync in %" PRId64 " ms\n", i_batch+1, n_img_batches, t_decode_sync_done - t_decode_sync_start);
 
         LOG_INF("%s decoded (batch %d/%d) in %" PRId64 " ms\n", name, i_batch+1, n_img_batches, ggml_time_ms() - t1);
 

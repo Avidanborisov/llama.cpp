@@ -103,6 +103,11 @@ endif()
 target_link_libraries  (${TARGET} PRIVATE common mtmd Threads::Threads)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+add_executable(llama-flash-attn-bench flash-attn-bench.cpp)
+set_target_properties(llama-flash-attn-bench PROPERTIES OUTPUT_NAME llama-flash-attn-bench)
+target_link_libraries(llama-flash-attn-bench PRIVATE ggml Threads::Threads)
+target_compile_features(llama-flash-attn-bench PRIVATE cxx_std_17)
+
 # mtmd-debug tool
 add_executable(llama-mtmd-debug debug/mtmd-debug.cpp)
 set_target_properties(llama-mtmd-debug PROPERTIES OUTPUT_NAME llama-mtmd-debug)

@@ -10,6 +10,7 @@
 #import <Foundation/Foundation.h>
 
 #import <Metal/Metal.h>
+#include <stdatomic.h>
 
 #undef MIN
 #undef MAX
@@ -79,7 +80,151 @@ struct ggml_metal {
     // error state - set when a command buffer fails during synchronize
     // once set, graph_compute will return GGML_STATUS_FAILED until the backend is recreated
     bool has_error;
+
+    uint64_t trace_graph_id;
 };
+
+static bool ggml_metal_trace_enabled(void) {
+    static int enabled = -1;
+    if (enabled < 0) {
+        enabled = getenv("GGML_METAL_MMTRACE") != nil ? 1 : 0;
+    }
+    return enabled != 0;
+}
+
+static bool ggml_metal_profile_per_op_enabled(void) {
+    static int enabled = -1;
+    if (enabled < 0) {
+        enabled = getenv("GGML_METAL_PROFILE_PER_OP") != nil ? 1 : 0;
+    }
+    return enabled != 0;
+}
+
+static void ggml_metal_format_group_ops(
+        struct ggml_cgraph * gf,
+        int idx_start,
+        int n_group,
+        char * out,
+        size_t out_size) {
+    if (out_size == 0) {
+        return;
+    }
+
+    out[0] = '\0';
+
+    size_t used = 0;
+    for (int i = 0; i < n_group; ++i) {
+        const char * name = ggml_op_name(gf->nodes[idx_start + i]->op);
+        const int nw = snprintf(out + used, out_size - used, "%s%s", i == 0 ? "" : "+", name);
+        if (nw <= 0) {
+            break;
+        }
+        if ((size_t) nw >= out_size - used) {
+            used = out_size - 1;
+            break;
+        }
+        used += (size_t) nw;
+        if (used + 4 >= out_size && i + 1 < n_group) {
+            snprintf(out + used, out_size - used, "+...");
+            break;
+        }
+    }
+}
+
+static enum ggml_status ggml_metal_graph_compute_profiled(ggml_metal_t ctx, struct ggml_cgraph * gf) {
+    @autoreleasepool {
+        ggml_metal_device_rsets_keep_alive(ctx->dev);
+
+        id<MTLCommandQueue> queue = ggml_metal_device_get_queue(ctx->dev);
+        const int64_t trace_graph_start_us = ggml_time_us();
+        const uint64_t trace_graph_id = ++ctx->trace_graph_id;
+
+        GGML_LOG_INFO("MMTRACE metal gpu_profile_begin graph=%" PRIu64 " nodes=%d\n", trace_graph_id, gf->n_nodes);
+
+        int seq = 0;
+        for (int idx = 0; idx < gf->n_nodes; ) {
+            struct ggml_tensor * node = gf->nodes[idx];
+
+            if (ggml_op_is_empty(node->op) || ggml_is_empty(node) || ((node->flags & GGML_TENSOR_FLAG_COMPUTE) == 0)) {
+                idx++;
+                continue;
+            }
+
+            const enum ggml_op op = node->op;
+            const int64_t t_wait_start_us = ggml_time_us();
+            const int64_t t_host_start_us = ggml_time_us();
+            id<MTLCommandBuffer> cmd_buf = [queue commandBufferWithUnretainedReferences];
+
+            ggml_metal_op_t ctx_op = ggml_metal_op_init(
+                    ctx->dev,
+                    cmd_buf,
+                    gf,
+                    idx,
+                    gf->n_nodes,
+                    ctx->use_fusion,
+                    false,
+                    false,
+                    ctx->debug_graph,
+                    ctx->debug_fusion);
+
+            const int n_group = ggml_metal_op_encode(ctx_op, 0);
+            ggml_metal_op_free(ctx_op);
+            const double host_ms = (ggml_time_us() - t_host_start_us) / 1000.0;
+
+            if (n_group <= 0) {
+                GGML_LOG_ERROR("%s: failed to encode node %d\n", __func__, idx);
+                return GGML_STATUS_FAILED;
+            }
+
+            [cmd_buf commit];
+            [cmd_buf waitUntilCompleted];
+
+            const MTLCommandBufferStatus status = [cmd_buf status];
+            if (status != MTLCommandBufferStatusCompleted) {
+                GGML_LOG_ERROR("%s: command buffer failed at node %d with status %lu\n", __func__, idx, (unsigned long) status);
+                if (status == MTLCommandBufferStatusError) {
+                    GGML_LOG_ERROR("error: %s\n", [[cmd_buf error].localizedDescription UTF8String]);
+                }
+                return GGML_STATUS_FAILED;
+            }
+
+            double gpu_ms = 0.0;
+            const CFTimeInterval gpu_start = cmd_buf.GPUStartTime;
+            const CFTimeInterval gpu_end   = cmd_buf.GPUEndTime;
+            if (gpu_end > gpu_start) {
+                gpu_ms = (gpu_end - gpu_start) * 1000.0;
+            }
+
+            const double wait_ms = (ggml_time_us() - t_wait_start_us) / 1000.0;
+            char ops_buf[256];
+            ggml_metal_format_group_ops(gf, idx, n_group, ops_buf, sizeof(ops_buf));
+
+            GGML_LOG_INFO(
+                    "MMTRACE metal gpu_group graph=%" PRIu64 " seq=%d range[%d,%d) op=%s fused=%d ops=%s host_ms=%.3f gpu_ms=%.3f wait_ms=%.3f at=%.3f\n",
+                    trace_graph_id,
+                    seq,
+                    idx,
+                    idx + n_group,
+                    ggml_op_name(op),
+                    n_group,
+                    ops_buf,
+                    host_ms,
+                    gpu_ms,
+                    wait_ms,
+                    (ggml_time_us() - trace_graph_start_us) / 1000.0);
+
+            idx += n_group;
+            seq++;
+        }
+
+        GGML_LOG_INFO(
+                "MMTRACE metal gpu_profile_end graph=%" PRIu64 " total_ms=%.3f\n",
+                trace_graph_id,
+                (ggml_time_us() - trace_graph_start_us) / 1000.0);
+    }
+
+    return GGML_STATUS_SUCCESS;
+}
 
 ggml_metal_t ggml_metal_init(ggml_metal_device_t dev) {
     GGML_LOG_INFO("%s: allocating\n", __func__);
@@ -441,6 +586,10 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
         return GGML_STATUS_FAILED;
     }
 
+    if (ggml_metal_profile_per_op_enabled()) {
+        return ggml_metal_graph_compute_profiled(ctx, gf);
+    }
+
     // number of nodes encoded by the main thread (empirically determined)
     const int n_main = MAX(64, 0.1*gf->n_nodes);
 
@@ -459,6 +608,8 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
 
     @autoreleasepool {
         ctx->gf = gf;
+        const int64_t trace_graph_start_us = ggml_time_us();
+        const uint64_t trace_graph_id = ++ctx->trace_graph_id;
 
         ctx->n_nodes_0 = MIN(n_main, gf->n_nodes);
         ctx->n_nodes_1 = gf->n_nodes - ctx->n_nodes_0;
@@ -517,6 +668,17 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
             }
             ctx->cmd_bufs[n_cb].obj = cmd_buf;
 
+            const int trace_idx_start = 0;
+            const int trace_idx_end   = ctx->n_nodes_0;
+            if (ggml_metal_trace_enabled()) {
+                GGML_LOG_INFO("MMTRACE metal cb_commit graph=%" PRIu64 " cb=%d range[%d,%d) at=%.3f ms\n",
+                        trace_graph_id, n_cb, trace_idx_start, trace_idx_end, (ggml_time_us() - trace_graph_start_us) / 1000.0);
+                [cmd_buf addCompletedHandler:^(id<MTLCommandBuffer> cb) {
+                    GGML_LOG_INFO("MMTRACE metal cb_complete graph=%" PRIu64 " cb=%d range[%d,%d) at=%.3f ms status=%lu\n",
+                            trace_graph_id, n_cb, trace_idx_start, trace_idx_end, (ggml_time_us() - trace_graph_start_us) / 1000.0, (unsigned long)[cb status]);
+                }];
+            }
+
             [cmd_buf enqueue];
 
             ctx->encode_async(n_cb);
@@ -535,6 +697,17 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
                 [ctx->cmd_bufs[cb_idx].obj release];
             }
             ctx->cmd_bufs[cb_idx].obj = cmd_buf;
+
+            const int trace_idx_start = ctx->n_nodes_0 + ((cb_idx + 0) * ctx->n_nodes_per_cb);
+            const int trace_idx_end = ctx->n_nodes_0 + (MIN((cb_idx == n_cb - 1) ? ctx->n_nodes_1 : (cb_idx + 1) * ctx->n_nodes_per_cb, ctx->n_nodes_1));
+            if (ggml_metal_trace_enabled()) {
+                GGML_LOG_INFO("MMTRACE metal cb_commit graph=%" PRIu64 " cb=%d range[%d,%d) at=%.3f ms\n",
+                        trace_graph_id, cb_idx, trace_idx_start, trace_idx_end, (ggml_time_us() - trace_graph_start_us) / 1000.0);
+                [cmd_buf addCompletedHandler:^(id<MTLCommandBuffer> cb) {
+                    GGML_LOG_INFO("MMTRACE metal cb_complete graph=%" PRIu64 " cb=%d range[%d,%d) at=%.3f ms status=%lu\n",
+                            trace_graph_id, cb_idx, trace_idx_start, trace_idx_end, (ggml_time_us() - trace_graph_start_us) / 1000.0, (unsigned long)[cb status]);
+                }];
+            }
 
             // always enqueue the first two command buffers
             // enqueue all of the command buffers if we don't need to abort
@@ -713,6 +886,7 @@ void ggml_metal_set_n_cb(ggml_metal_t ctx, int n_cb) {
             idx += res - 1;
         }
 
+        ggml_metal_op_trace_log(ctx_op);
         ggml_metal_op_free(ctx_op);
 
         if (cb_idx < 2 || ctx->abort_callback == NULL) {

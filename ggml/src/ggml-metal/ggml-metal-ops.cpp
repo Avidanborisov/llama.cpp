@@ -10,8 +10,18 @@
 
 #include <cassert>
 #include <algorithm>
+#include <cinttypes>
+#include <cstdlib>
 #include <limits>
 #include <cmath>
+
+static bool ggml_metal_trace_enabled() {
+    static int enabled = -1;
+    if (enabled < 0) {
+        enabled = getenv("GGML_METAL_MMTRACE") != nullptr ? 1 : 0;
+    }
+    return enabled != 0;
+}
 
 static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
     if (!t) {
@@ -49,6 +59,8 @@ struct ggml_metal_op {
         this->debug_graph     = debug_graph;
         this->debug_fusion    = debug_fusion;
         this->gf              = gf;
+        this->idx_start_raw   = idx_start;
+        this->idx_end_raw     = idx_end;
 
         idxs.reserve(gf->n_nodes);
 
@@ -99,6 +111,11 @@ struct ggml_metal_op {
 
     int debug_graph;
     int debug_fusion;
+    int idx_start_raw;
+    int idx_end_raw;
+    uint64_t trace_node_count[GGML_OP_COUNT] = { 0 };
+    uint64_t trace_encode_us[GGML_OP_COUNT] = { 0 };
+    uint64_t trace_fused_nodes = 0;
 
 private:
     ggml_cgraph * gf;
@@ -492,7 +509,11 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
 }
 
 int ggml_metal_op_encode(ggml_metal_op_t ctx, int idx) {
-    if (ctx->use_capture) {
+    const int64_t t_start = ggml_metal_trace_enabled() ? ggml_time_us() : 0;
+    const enum ggml_op op = ctx->node(idx)->op;
+    const bool use_debug_group = ctx->use_capture || ggml_metal_trace_enabled();
+
+    if (use_debug_group) {
         ggml_metal_encoder_debug_group_push(ctx->enc, ggml_op_desc(ctx->node(idx)));
     }
 
@@ -502,11 +523,60 @@ int ggml_metal_op_encode(ggml_metal_op_t ctx, int idx) {
                 "https://github.com/ggml-org/llama.cpp/pull/14849");
     }
 
-    if (ctx->use_capture) {
+    if (use_debug_group) {
         ggml_metal_encoder_debug_group_pop(ctx->enc);
     }
 
+    if (ggml_metal_trace_enabled()) {
+        ctx->trace_node_count[op] += 1;
+        if (res > 1) {
+            ctx->trace_fused_nodes += (uint64_t) (res - 1);
+            for (int i = 1; i < res; ++i) {
+                const enum ggml_op fused_op = ctx->node(idx + i)->op;
+                ctx->trace_node_count[fused_op] += 1;
+            }
+        }
+        ctx->trace_encode_us[op] += (uint64_t) (ggml_time_us() - t_start);
+    }
+
     return res;
+}
+
+void ggml_metal_op_trace_log(ggml_metal_op_t ctx) {
+    if (!ggml_metal_trace_enabled()) {
+        return;
+    }
+
+    uint64_t total_us = 0;
+    uint64_t total_nodes = 0;
+    for (int i = 0; i < GGML_OP_COUNT; ++i) {
+        total_us += ctx->trace_encode_us[i];
+        total_nodes += ctx->trace_node_count[i];
+    }
+
+    if (total_nodes == 0) {
+        return;
+    }
+
+    GGML_LOG_INFO(
+            "MMTRACE metal graph_summary range[%d,%d) nodes=%" PRIu64 " fused_extra=%" PRIu64 " host_encode_ms=%.3f\n",
+            ctx->idx_start_raw,
+            ctx->idx_end_raw,
+            total_nodes,
+            ctx->trace_fused_nodes,
+            total_us / 1000.0);
+
+    for (int i = 0; i < GGML_OP_COUNT; ++i) {
+        if (ctx->trace_node_count[i] == 0) {
+            continue;
+        }
+
+        GGML_LOG_INFO(
+                "MMTRACE metal op_summary op=%s nodes=%" PRIu64 " host_encode_ms=%.3f\n",
+                ggml_op_name((enum ggml_op) i),
+                ctx->trace_node_count[i],
+                ctx->trace_encode_us[i] / 1000.0);
+    }
 }
 
 int ggml_metal_op_concat(ggml_metal_op_t ctx, int idx) {

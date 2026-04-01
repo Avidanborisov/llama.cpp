@@ -1,6 +1,7 @@
 #include "mtmd-image.h"
 
 #include <algorithm>
+#include <cinttypes>
 #include <cmath>
 #include <vector>
 
@@ -563,9 +564,13 @@ private:
 //
 
 bool mtmd_image_preprocessor_llava_uhd::preprocess(const clip_image_u8 & img, clip_image_f32_batch & output) {
+    const int64_t t0 = ggml_time_ms();
     const clip_image_size original_size{img.nx, img.ny};
+    const int64_t t_plan_start = ggml_time_ms();
     auto const inst = get_slice_instructions(original_size);
+    const int64_t t_plan_done = ggml_time_ms();
     std::vector<clip_image_u8_ptr> imgs = slice_image(img, inst);
+    const int64_t t_slice_done = ggml_time_ms();
 
     for (size_t i = 0; i < imgs.size(); ++i) {
         // clip_image_save_to_bmp(*imgs[i], "slice_" + std::to_string(i) + ".bmp");
@@ -573,9 +578,14 @@ bool mtmd_image_preprocessor_llava_uhd::preprocess(const clip_image_u8 & img, cl
         img_u8_to_f32(*imgs[i], *res, hparams.image_mean, hparams.image_std);
         output.entries.push_back(std::move(res));
     }
+    const int64_t t_norm_done = ggml_time_ms();
 
     output.grid_x = inst.grid_size.width;
     output.grid_y = inst.grid_size.height;
+    LOG_INF("MMTRACE preprocess llava_uhd plan in %" PRId64 " ms\n", t_plan_done - t_plan_start);
+    LOG_INF("MMTRACE preprocess llava_uhd slice in %" PRId64 " ms\n", t_slice_done - t_plan_done);
+    LOG_INF("MMTRACE preprocess llava_uhd normalize in %" PRId64 " ms\n", t_norm_done - t_slice_done);
+    LOG_INF("MMTRACE preprocess llava_uhd total in %" PRId64 " ms\n", t_norm_done - t0);
     return true;
 }
 
@@ -1060,16 +1070,25 @@ bool mtmd_image_preprocessor_idefics3::preprocess(const clip_image_u8 & img, cli
 //
 
 bool mtmd_image_preprocessor_internvl::preprocess(const clip_image_u8 & img, clip_image_f32_batch & output) {
+    const int64_t t0 = ggml_time_ms();
     GGML_ASSERT(!hparams.image_res_candidates.empty());
     const clip_image_size original_size{img.nx, img.ny};
+    const int64_t t_plan_start = ggml_time_ms();
     auto const inst = get_slice_instructions(original_size);
+    const int64_t t_plan_done = ggml_time_ms();
     std::vector<clip_image_u8_ptr> imgs = slice_image(img, inst, false);
+    const int64_t t_slice_done = ggml_time_ms();
 
     for (size_t i = 0; i < imgs.size(); ++i) {
         clip_image_f32_ptr res(clip_image_f32_init());
         img_u8_to_f32(*imgs[i], *res, hparams.image_mean, hparams.image_std);
         output.entries.push_back(std::move(res));
     }
+    const int64_t t_norm_done = ggml_time_ms();
+    LOG_INF("MMTRACE preprocess internvl plan in %" PRId64 " ms\n", t_plan_done - t_plan_start);
+    LOG_INF("MMTRACE preprocess internvl slice in %" PRId64 " ms\n", t_slice_done - t_plan_done);
+    LOG_INF("MMTRACE preprocess internvl normalize in %" PRId64 " ms\n", t_norm_done - t_slice_done);
+    LOG_INF("MMTRACE preprocess internvl total in %" PRId64 " ms\n", t_norm_done - t0);
     return true;
 }
 

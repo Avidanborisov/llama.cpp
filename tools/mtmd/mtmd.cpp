@@ -17,6 +17,7 @@
 #endif
 
 #include <algorithm>
+#include <cinttypes>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -654,12 +655,14 @@ struct mtmd_tokenizer {
             std::memcpy(img_u8->buf.data(), bitmap->data.data(), img_u8->nx * img_u8->ny * 3);
 
             // preprocess image
+            const int64_t t_preprocess_start = ggml_time_ms();
             clip_image_f32_batch batch_f32;
             bool ok = ctx->image_preproc->preprocess(*img_u8, batch_f32);
             if (!ok) {
                 LOG_ERR("Unable to preprocess image\n");
                 return 2;
             }
+            LOG_INF("MMTRACE preprocess image total in %" PRId64 " ms\n", ggml_time_ms() - t_preprocess_start);
 
             // handle llava-uhd style preprocessing
             const bool has_tiling_grid = batch_f32.grid_x > 0 && batch_f32.grid_y > 0;

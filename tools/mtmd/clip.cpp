@@ -2697,6 +2697,12 @@ bool clip_image_encode(struct clip_ctx * ctx, const int n_threads, clip_image_f3
 bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_image_f32_batch * imgs_c_ptr, float * vec) {
     const clip_image_f32_batch & imgs = *imgs_c_ptr;
     int batch_size = imgs.entries.size();
+    const int64_t t_encode_start = ggml_time_ms();
+    int64_t t_graph_build_alloc_ms = 0;
+    int64_t t_input_pack_ms = 0;
+    int64_t t_projector_inputs_ms = 0;
+    int64_t t_graph_compute_ms = 0;
+    int64_t t_output_copy_ms = 0;
 
     // TODO @ngxson : implement batch size > 1 as a loop
     //                we don't need true batching support because the cgraph will gonna be big anyway
@@ -2710,9 +2716,11 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
     }
 
     // build the inference graph
+    const int64_t t_graph_build_start = ggml_time_ms();
     ggml_backend_sched_reset(ctx->sched.get());
     ggml_cgraph * gf = clip_image_build_graph(ctx, imgs);
     ggml_backend_sched_alloc_graph(ctx->sched.get(), gf);
+    t_graph_build_alloc_ms = ggml_time_ms() - t_graph_build_start;
 
     // set inputs
     const auto & model   = ctx->model;
@@ -2755,6 +2763,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
 
     // set input pixel values
     if (!imgs.is_audio) {
+        const int64_t t_input_pack_start = ggml_time_ms();
         size_t nelem = 0;
         for (const auto & img : imgs.entries) {
             nelem += img->nx * img->ny * 3;
@@ -2791,8 +2800,10 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
             }
         }
         set_input_f32("inp_raw", inp_raw);
+        t_input_pack_ms += ggml_time_ms() - t_input_pack_start;
 
     } else {
+        const int64_t t_input_pack_start = ggml_time_ms();
         // audio input
         GGML_ASSERT(imgs.entries.size() == 1);
         const auto & mel_inp = imgs.entries[0];
@@ -2801,9 +2812,11 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         std::vector<float> inp_raw(n_step * n_mel);
         std::memcpy(inp_raw.data(), mel_inp->buf.data(), n_step * n_mel * sizeof(float));
         set_input_f32("inp_raw", inp_raw);
+        t_input_pack_ms += ggml_time_ms() - t_input_pack_start;
     }
 
     // set input per projector
+    const int64_t t_projector_inputs_start = ggml_time_ms();
     switch (ctx->model.proj_type) {
         case PROJECTOR_TYPE_MINICPMV:
             {
@@ -3113,6 +3126,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         default:
             GGML_ABORT("Unknown projector type");
     }
+    t_projector_inputs_ms = ggml_time_ms() - t_projector_inputs_start;
 
     // ggml_backend_cpu_set_n_threads(ctx->backend_cpu, n_threads);
     ggml_backend_dev_t dev = ggml_backend_get_device(ctx->backend_cpu);
@@ -3124,7 +3138,11 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         }
     }
 
+    LOG_INF("MMTRACE encode gpu graph_compute begin\n");
+    const int64_t t_graph_compute_start = ggml_time_ms();
     auto status = ggml_backend_sched_graph_compute(ctx->sched.get(), gf);
+    t_graph_compute_ms = ggml_time_ms() - t_graph_compute_start;
+    LOG_INF("MMTRACE encode gpu graph_compute end\n");
     if (status != GGML_STATUS_SUCCESS) {
         LOG_ERR("%s: ggml_backend_sched_graph_compute failed with error %d\n", __func__, status);
         return false;
@@ -3143,7 +3161,9 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
 
     // copy the embeddings to the location passed by the user
     if (vec != nullptr) {
+        const int64_t t_output_copy_start = ggml_time_ms();
         ggml_backend_tensor_get(embeddings, vec, 0, ggml_nbytes(embeddings));
+        t_output_copy_ms += ggml_time_ms() - t_output_copy_start;
     }
 
     // Debug: dump final embeddings if MTMD_DEBUG_EMBEDDINGS is set
@@ -3187,6 +3207,13 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         LOG_INF("=== END MTMD_DEBUG_EMBEDDINGS ===\n\n");
     }
 
+    const int64_t t_encode_done = ggml_time_ms();
+    LOG_INF("MMTRACE encode host graph_build_alloc in %" PRId64 " ms\n", t_graph_build_alloc_ms);
+    LOG_INF("MMTRACE encode host input_pack in %" PRId64 " ms\n", t_input_pack_ms);
+    LOG_INF("MMTRACE encode host projector_inputs in %" PRId64 " ms\n", t_projector_inputs_ms);
+    LOG_INF("MMTRACE encode gpu graph_compute in %" PRId64 " ms\n", t_graph_compute_ms);
+    LOG_INF("MMTRACE encode transfer output_copy in %" PRId64 " ms\n", t_output_copy_ms);
+    LOG_INF("MMTRACE encode total in %" PRId64 " ms\n", t_encode_done - t_encode_start);
     return true;
 }
 
