@@ -27,6 +27,11 @@
 
 struct clip_logger_state g_logger_state = {clip_log_callback_default, NULL};
 
+static bool mtmd_flash_attn_q_f16_enabled() {
+    const char * val = getenv("MTMD_FLASH_ATTN_Q_F16");
+    return val && (std::string(val) == "1" || std::string(val) == "true");
+}
+
 //#define CLIP_DEBUG_FUNCTIONS
 
 #ifdef CLIP_DEBUG_FUNCTIONS
@@ -626,6 +631,10 @@ ggml_tensor * clip_graph::build_attn(
 
         k = ggml_cast(ctx0, k, GGML_TYPE_F16);
         v = ggml_cast(ctx0, v, GGML_TYPE_F16);
+
+        if (mtmd_flash_attn_q_f16_enabled()) {
+            q = ggml_cast(ctx0, q, GGML_TYPE_F16);
+        }
 
         cur = ggml_flash_attn_ext(ctx0, q, k, v, kq_mask, kq_scale, 0.0f, 0.0f);
         ggml_flash_attn_ext_set_prec(cur, GGML_PREC_F32);

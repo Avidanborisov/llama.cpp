@@ -29,7 +29,17 @@ struct args_t {
     int warmup = 2;
     int runs = 7;
     float scale = 1.0f;
+    std::string q_type_str = "f32";
+    std::string k_type_str = "f16";
+    std::string v_type_str = "f16";
 };
+
+static ggml_type parse_type(const std::string & s) {
+    if (s == "f32")  return GGML_TYPE_F32;
+    if (s == "f16")  return GGML_TYPE_F16;
+    if (s == "bf16") return GGML_TYPE_BF16;
+    throw std::runtime_error("unknown type: " + s + " (expected f32, f16, or bf16)");
+}
 
 static std::string get_arg(int & i, int argc, char ** argv) {
     if (i + 1 >= argc) {
@@ -64,6 +74,12 @@ static args_t parse_args(int argc, char ** argv) {
             args.runs = std::stoi(get_arg(i, argc, argv));
         } else if (arg == "--scale") {
             args.scale = std::stof(get_arg(i, argc, argv));
+        } else if (arg == "--q-type") {
+            args.q_type_str = get_arg(i, argc, argv);
+        } else if (arg == "--k-type") {
+            args.k_type_str = get_arg(i, argc, argv);
+        } else if (arg == "--v-type") {
+            args.v_type_str = get_arg(i, argc, argv);
         } else {
             throw std::runtime_error("unknown arg: " + arg);
         }
@@ -123,6 +139,10 @@ int main(int argc, char ** argv) {
     try {
         const args_t args = parse_args(argc, argv);
 
+        const ggml_type q_type = parse_type(args.q_type_str);
+        const ggml_type k_type = parse_type(args.k_type_str);
+        const ggml_type v_type = parse_type(args.v_type_str);
+
         ggml_backend_load_all();
 
         ggml_backend_t backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_GPU, nullptr);
@@ -146,9 +166,9 @@ int main(int argc, char ** argv) {
             throw std::runtime_error("ggml_init failed");
         }
 
-        ggml_tensor * q = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, args.ne0, args.ne1, args.ne2, args.ne3);
-        ggml_tensor * k = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, args.ne0, args.ne1, args.ne2, args.ne3);
-        ggml_tensor * v = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, args.ne0, args.ne1, args.ne2, args.ne3);
+        ggml_tensor * q = ggml_new_tensor_4d(ctx, q_type, args.ne0, args.ne1, args.ne2, args.ne3);
+        ggml_tensor * k = ggml_new_tensor_4d(ctx, k_type, args.ne0, args.ne1, args.ne2, args.ne3);
+        ggml_tensor * v = ggml_new_tensor_4d(ctx, v_type, args.ne0, args.ne1, args.ne2, args.ne3);
         ggml_set_name(q, "q");
         ggml_set_name(k, "k");
         ggml_set_name(v, "v");
@@ -217,6 +237,9 @@ int main(int argc, char ** argv) {
         json << std::fixed << std::setprecision(6);
         json << "{\n";
         json << "  \"backend\": \"" << backend_name << "\",\n";
+        json << "  \"q_type\": \"" << args.q_type_str << "\",\n";
+        json << "  \"k_type\": \"" << args.k_type_str << "\",\n";
+        json << "  \"v_type\": \"" << args.v_type_str << "\",\n";
         json << "  \"shape\": [" << args.ne0 << ", " << args.ne1 << ", " << args.ne2 << ", " << args.ne3 << "],\n";
         json << "  \"scale\": " << args.scale << ",\n";
         json << "  \"warmup\": " << args.warmup << ",\n";

@@ -5550,6 +5550,7 @@ template<
     typename q_t,     // query types in shared memory
     typename q4_t,
     typename q8x8_t,
+    typename qd4_t,   // query type in device memory (float4 or half4)
     typename k_t,     // key types in shared memory
     typename k4x4_t,
     typename k8x8_t,
@@ -5670,7 +5671,7 @@ void kernel_flash_attn_ext_impl(
     FOR_UNROLL (short jj = 0; jj < NQ; ++jj) {
         const short j = jj*NSG + sgitg;
 
-        device const float4 * q4 = (device const float4 *) ((device const char *) q + j*args.nb01);
+        device const qd4_t * q4 = (device const qd4_t *) ((device const char *) q + j*args.nb01);
 
         for (short i = tiisg; i < DK4; i += NW) {
             if (iq1 + j < args.ne01) {
@@ -6189,6 +6190,7 @@ template<
     typename q_t,     // query types in shared memory
     typename q4_t,
     typename q8x8_t,
+    typename qd4_t,   // query type in device memory (float4 or half4)
     typename k_t,     // key types in shared memory
     typename k4x4_t,
     typename k8x8_t,
@@ -6227,7 +6229,7 @@ kernel void kernel_flash_attn_ext(
         uint3   tgpig[[threadgroup_position_in_grid]],
         ushort  tiisg[[thread_index_in_simdgroup]],
         ushort  sgitg[[simdgroup_index_in_threadgroup]]) {
-#define FWD_TMPL q_t, q4_t, q8x8_t, k_t, k4x4_t, k8x8_t, v_t, v4x4_t, v8x8_t, qk_t, qk8x8_t, s_t, s2_t, s8x8_t, o_t, o4_t, o8x8_t, kd4x4_t, nl_k, deq_k, vd4x4_t, nl_v, deq_v, DK, DV, Q, C
+#define FWD_TMPL q_t, q4_t, q8x8_t, qd4_t, k_t, k4x4_t, k8x8_t, v_t, v4x4_t, v8x8_t, qk_t, qk8x8_t, s_t, s2_t, s8x8_t, o_t, o4_t, o8x8_t, kd4x4_t, nl_k, deq_k, vd4x4_t, nl_v, deq_v, DK, DV, Q, C
 #define FWD_ARGS args, q, k, v, mask, sinks, pad, blk, dst, shmem_f16, tgpig, tiisg, sgitg
     switch (FC_flash_attn_ext_nsg) {
       // note: disabled cases to reduce library load time
@@ -6245,6 +6247,7 @@ kernel void kernel_flash_attn_ext(
 //
 #define FA_TYPES \
     half,   half4,     simdgroup_half8x8,  \
+    float4,                                \
     half,   half4x4,   simdgroup_half8x8,  \
     half,   half4x4,   simdgroup_half8x8,  \
     float,             simdgroup_float8x8, \
@@ -6252,8 +6255,18 @@ kernel void kernel_flash_attn_ext(
     float,  float4,    simdgroup_float8x8
     //half,   half4,     simdgroup_half8x8
 
+#define FA_TYPES_Q16 \
+    half,   half4,     simdgroup_half8x8,  \
+    half4,                                 \
+    half,   half4x4,   simdgroup_half8x8,  \
+    half,   half4x4,   simdgroup_half8x8,  \
+    float,             simdgroup_float8x8, \
+    float,  float2,    simdgroup_float8x8, \
+    float,  float4,    simdgroup_float8x8
+
 #define FA_TYPES_BF \
     bfloat, bfloat4,   simdgroup_bfloat8x8, \
+    float4,                                  \
     bfloat, bfloat4x4, simdgroup_bfloat8x8, \
     bfloat, bfloat4x4, simdgroup_bfloat8x8, \
     float,             simdgroup_float8x8,  \
@@ -6263,6 +6276,7 @@ kernel void kernel_flash_attn_ext(
 
 #define FA_TYPES_F32 \
     half,   half4,     simdgroup_half8x8,  \
+    float4,                                \
     float,  float4x4,  simdgroup_float8x8, \
     float,  float4x4,  simdgroup_float8x8, \
     float,             simdgroup_float8x8, \
@@ -6303,6 +6317,19 @@ template [[host_name("kernel_flash_attn_ext_f16_dk256_dv256")]]  kernel flash_at
 template [[host_name("kernel_flash_attn_ext_f16_dk320_dv256")]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES,    half4x4,    1, dequantize_f16,  half4x4,    1, dequantize_f16,  320, 256>;
 template [[host_name("kernel_flash_attn_ext_f16_dk512_dv512")]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES,    half4x4,    1, dequantize_f16,  half4x4,    1, dequantize_f16,  512, 512>;
 template [[host_name("kernel_flash_attn_ext_f16_dk576_dv512")]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES,    half4x4,    1, dequantize_f16,  half4x4,    1, dequantize_f16,  576, 512>;
+
+// Q=16 instantiations for f16/f16/f16 fast path (Q data read as half4 from device memory)
+typedef decltype(kernel_flash_attn_ext<FA_TYPES_Q16, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16, 64, 64, OP_FLASH_ATTN_EXT_NQPSG_16>) flash_attn_ext_q16_t;
+
+template [[host_name("kernel_flash_attn_ext_f16_dk32_dv32_q16"  )]]  kernel flash_attn_ext_q16_t kernel_flash_attn_ext<FA_TYPES_Q16, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  32,  32, OP_FLASH_ATTN_EXT_NQPSG_16>;
+template [[host_name("kernel_flash_attn_ext_f16_dk40_dv40_q16"  )]]  kernel flash_attn_ext_q16_t kernel_flash_attn_ext<FA_TYPES_Q16, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  40,  40, OP_FLASH_ATTN_EXT_NQPSG_16>;
+template [[host_name("kernel_flash_attn_ext_f16_dk48_dv48_q16"  )]]  kernel flash_attn_ext_q16_t kernel_flash_attn_ext<FA_TYPES_Q16, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  48,  48, OP_FLASH_ATTN_EXT_NQPSG_16>;
+template [[host_name("kernel_flash_attn_ext_f16_dk64_dv64_q16"  )]]  kernel flash_attn_ext_q16_t kernel_flash_attn_ext<FA_TYPES_Q16, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  64,  64, OP_FLASH_ATTN_EXT_NQPSG_16>;
+template [[host_name("kernel_flash_attn_ext_f16_dk72_dv72_q16"  )]]  kernel flash_attn_ext_q16_t kernel_flash_attn_ext<FA_TYPES_Q16, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  72,  72, OP_FLASH_ATTN_EXT_NQPSG_16>;
+template [[host_name("kernel_flash_attn_ext_f16_dk80_dv80_q16"  )]]  kernel flash_attn_ext_q16_t kernel_flash_attn_ext<FA_TYPES_Q16, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  80,  80, OP_FLASH_ATTN_EXT_NQPSG_16>;
+template [[host_name("kernel_flash_attn_ext_f16_dk96_dv96_q16"  )]]  kernel flash_attn_ext_q16_t kernel_flash_attn_ext<FA_TYPES_Q16, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  96,  96, OP_FLASH_ATTN_EXT_NQPSG_16>;
+template [[host_name("kernel_flash_attn_ext_f16_dk112_dv112_q16")]]  kernel flash_attn_ext_q16_t kernel_flash_attn_ext<FA_TYPES_Q16, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  112, 112, OP_FLASH_ATTN_EXT_NQPSG_16>;
+template [[host_name("kernel_flash_attn_ext_f16_dk128_dv128_q16")]]  kernel flash_attn_ext_q16_t kernel_flash_attn_ext<FA_TYPES_Q16, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  128, 128, OP_FLASH_ATTN_EXT_NQPSG_16>;
 
 #if defined(GGML_METAL_HAS_BF16)
 template [[host_name("kernel_flash_attn_ext_bf16_dk32_dv32"  )]] kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES_BF, bfloat4x4,  1, dequantize_bf16, bfloat4x4,  1, dequantize_bf16, 32,  32>;
