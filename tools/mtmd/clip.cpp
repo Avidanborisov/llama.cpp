@@ -27,10 +27,11 @@
 
 struct clip_logger_state g_logger_state = {clip_log_callback_default, NULL};
 
-static bool mtmd_qwen35_flash_attn_bf16_enabled() {
+static bool mtmd_qwen35_flash_attn_q_f16_enabled() {
     static int enabled = -1;
     if (enabled < 0) {
-        enabled = std::getenv("MTMD_QWEN35_FLASH_ATTN_BF16") != nullptr ? 1 : 0;
+        const char * value = std::getenv("MTMD_QWEN35_FLASH_ATTN_Q_F16");
+        enabled = value == nullptr || std::strcmp(value, "0") != 0;
     }
     return enabled != 0;
 }
@@ -632,16 +633,11 @@ ggml_tensor * clip_graph::build_attn(
     if (flash_attn_type == CLIP_FLASH_ATTN_TYPE_ENABLED) {
         ggml_tensor * v = ggml_permute(ctx0, v_cur, 0, 2, 1, 3);
 
-        if (mtmd_qwen35_flash_attn_bf16_enabled()) {
-            // Experimental Qwen3.5 vision path: keep Q/K/V in BF16 to match
-            // the live MLX attention path more closely for Metal benchmarking.
-            q = ggml_cast(ctx0, q, GGML_TYPE_BF16);
-            k = ggml_cast(ctx0, k, GGML_TYPE_BF16);
-            v = ggml_cast(ctx0, v, GGML_TYPE_BF16);
-        } else {
-            k = ggml_cast(ctx0, k, GGML_TYPE_F16);
-            v = ggml_cast(ctx0, v, GGML_TYPE_F16);
+        if (mtmd_qwen35_flash_attn_q_f16_enabled()) {
+            q = ggml_cast(ctx0, q, GGML_TYPE_F16);
         }
+        k = ggml_cast(ctx0, k, GGML_TYPE_F16);
+        v = ggml_cast(ctx0, v, GGML_TYPE_F16);
 
         cur = ggml_flash_attn_ext(ctx0, q, k, v, kq_mask, kq_scale, 0.0f, 0.0f);
         ggml_flash_attn_ext_set_prec(cur, GGML_PREC_F32);
