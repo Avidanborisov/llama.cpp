@@ -11,6 +11,7 @@
 #include <cassert>
 #include <algorithm>
 #include <cinttypes>
+#include <cstring>
 #include <cstdlib>
 #include <limits>
 #include <cmath>
@@ -21,6 +22,14 @@ static bool ggml_metal_trace_enabled() {
         enabled = getenv("GGML_METAL_MMTRACE") != nullptr ? 1 : 0;
     }
     return enabled != 0;
+}
+
+static bool ggml_metal_env_flag(const char * name) {
+    const char * value = getenv(name);
+    if (!value || !*value) {
+        return false;
+    }
+    return strcmp(value, "0") != 0;
 }
 
 static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
@@ -2761,7 +2770,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
         const int ncpsg = OP_FLASH_ATTN_EXT_NCPSG; // cache values per simdgroup
 
         // f16/f16/f16 fast path: use Q=16 to halve threadgroup count when dk fits in shared memory
-        if (op->src[0]->type == GGML_TYPE_F16 && op->src[1]->type == GGML_TYPE_F16 && ne00 <= 128) {
+        if (op->src[0]->type == GGML_TYPE_F16 && op->src[1]->type == GGML_TYPE_F16 && ne00 <= 128 && !ggml_metal_env_flag("GGML_METAL_FA_Q16_DISABLE")) {
             nqptg = OP_FLASH_ATTN_EXT_NQPSG_16;
         }
 
@@ -2871,7 +2880,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
 
         // simdgroups per threadgroup (a.k.a. warps)
         //nsg = ne01 <= nqptg ? MAX(4, MIN(nsgmax, MIN(ne11/ncpsg, (int64_t) pipeline.maxTotalThreadsPerThreadgroup/32))) : 4;
-        int32_t nsg = ne00 >= 512 ? 8 : 4;
+        int32_t nsg = nqptg == OP_FLASH_ATTN_EXT_NQPSG_16 ? 8 : (ne00 >= 512 ? 8 : 4);
 
         const size_t smem = FATTN_SMEM(nsg);
 
