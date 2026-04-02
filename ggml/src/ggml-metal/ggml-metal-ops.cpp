@@ -11,6 +11,7 @@
 #include <cassert>
 #include <algorithm>
 #include <cinttypes>
+#include <cstring>
 #include <cstdlib>
 #include <limits>
 #include <cmath>
@@ -21,6 +22,14 @@ static bool ggml_metal_trace_enabled() {
         enabled = getenv("GGML_METAL_MMTRACE") != nullptr ? 1 : 0;
     }
     return enabled != 0;
+}
+
+static bool ggml_metal_env_flag(const char * name) {
+    const char * value = getenv(name);
+    if (!value || !*value) {
+        return false;
+    }
+    return strcmp(value, "0") != 0;
 }
 
 static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
@@ -2702,7 +2711,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
 
     GGML_ASSERT(ne00 % 4 == 0);
 
-    GGML_ASSERT(op->src[0]->type == GGML_TYPE_F32);
+    GGML_ASSERT(op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16 || op->src[0]->type == GGML_TYPE_BF16);
     GGML_ASSERT(op->src[1]->type == op->src[2]->type);
 
     //GGML_ASSERT(ggml_are_same_shape (src1, src2));
@@ -2759,6 +2768,9 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
         // half8x8 kernel
         const int nqptg = OP_FLASH_ATTN_EXT_NQPSG; // queries per threadgroup
         const int ncpsg = OP_FLASH_ATTN_EXT_NCPSG; // cache values per simdgroup
+
+        // use f16 Q kernel when query tensor is f16 (reduces Q bandwidth)
+        const bool use_f16q = (op->src[0]->type == GGML_TYPE_F16) && !ggml_metal_env_flag("GGML_METAL_FA_F16Q_DISABLE");
 
         GGML_ASSERT(nqptg <= 32);
         GGML_ASSERT(nqptg  % 8  == 0);
@@ -2905,7 +2917,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
             /*.logit_softcap =*/ logit_softcap,
         };
 
-        auto pipeline = ggml_metal_library_get_pipeline_flash_attn_ext(lib, op, has_mask, has_sinks, has_bias, has_scap, has_kvpad, nsg);
+        auto pipeline = ggml_metal_library_get_pipeline_flash_attn_ext(lib, op, has_mask, has_sinks, has_bias, has_scap, has_kvpad, nsg, use_f16q);
 
         ggml_metal_encoder_set_pipeline(enc, pipeline);
         ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
