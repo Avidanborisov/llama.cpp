@@ -5550,6 +5550,7 @@ template<
     typename q_t,     // query types in shared memory
     typename q4_t,
     typename q8x8_t,
+    typename qd4_t,   // query type in device memory
     typename k_t,     // key types in shared memory
     typename k4x4_t,
     typename k8x8_t,
@@ -5670,7 +5671,7 @@ void kernel_flash_attn_ext_impl(
     FOR_UNROLL (short jj = 0; jj < NQ; ++jj) {
         const short j = jj*NSG + sgitg;
 
-        device const float4 * q4 = (device const float4 *) ((device const char *) q + j*args.nb01);
+        device const qd4_t * q4 = (device const qd4_t *) ((device const char *) q + j*args.nb01);
 
         for (short i = tiisg; i < DK4; i += NW) {
             if (iq1 + j < args.ne01) {
@@ -6189,6 +6190,7 @@ template<
     typename q_t,     // query types in shared memory
     typename q4_t,
     typename q8x8_t,
+    typename qd4_t,   // query type in device memory
     typename k_t,     // key types in shared memory
     typename k4x4_t,
     typename k8x8_t,
@@ -6227,7 +6229,7 @@ kernel void kernel_flash_attn_ext(
         uint3   tgpig[[threadgroup_position_in_grid]],
         ushort  tiisg[[thread_index_in_simdgroup]],
         ushort  sgitg[[simdgroup_index_in_threadgroup]]) {
-#define FWD_TMPL q_t, q4_t, q8x8_t, k_t, k4x4_t, k8x8_t, v_t, v4x4_t, v8x8_t, qk_t, qk8x8_t, s_t, s2_t, s8x8_t, o_t, o4_t, o8x8_t, kd4x4_t, nl_k, deq_k, vd4x4_t, nl_v, deq_v, DK, DV, Q, C
+#define FWD_TMPL q_t, q4_t, q8x8_t, qd4_t, k_t, k4x4_t, k8x8_t, v_t, v4x4_t, v8x8_t, qk_t, qk8x8_t, s_t, s2_t, s8x8_t, o_t, o4_t, o8x8_t, kd4x4_t, nl_k, deq_k, vd4x4_t, nl_v, deq_v, DK, DV, Q, C
 #define FWD_ARGS args, q, k, v, mask, sinks, pad, blk, dst, shmem_f16, tgpig, tiisg, sgitg
     switch (FC_flash_attn_ext_nsg) {
       // note: disabled cases to reduce library load time
@@ -6245,6 +6247,7 @@ kernel void kernel_flash_attn_ext(
 //
 #define FA_TYPES \
     half,   half4,     simdgroup_half8x8,  \
+    float4,                                \
     half,   half4x4,   simdgroup_half8x8,  \
     half,   half4x4,   simdgroup_half8x8,  \
     float,             simdgroup_float8x8, \
@@ -6254,6 +6257,7 @@ kernel void kernel_flash_attn_ext(
 
 #define FA_TYPES_BF \
     bfloat, bfloat4,   simdgroup_bfloat8x8, \
+    float4,                                  \
     bfloat, bfloat4x4, simdgroup_bfloat8x8, \
     bfloat, bfloat4x4, simdgroup_bfloat8x8, \
     float,             simdgroup_float8x8,  \
@@ -6263,6 +6267,7 @@ kernel void kernel_flash_attn_ext(
 
 #define FA_TYPES_F32 \
     half,   half4,     simdgroup_half8x8,  \
+    float4,                                \
     float,  float4x4,  simdgroup_float8x8, \
     float,  float4x4,  simdgroup_float8x8, \
     float,             simdgroup_float8x8, \
