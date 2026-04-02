@@ -23,6 +23,14 @@ static bool ggml_metal_trace_enabled() {
     return enabled != 0;
 }
 
+static int ggml_metal_env_int(const char * name, int fallback = -1) {
+    const char * value = getenv(name);
+    if (!value || !*value) {
+        return fallback;
+    }
+    return atoi(value);
+}
+
 static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
     if (!t) {
         return { nullptr, 0 };
@@ -2563,6 +2571,21 @@ bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
     const int64_t ne00 = op->src[0]->ne[0]; // head size
     const int64_t ne01 = op->src[0]->ne[1]; // batch size
 
+    const int force_vec = ggml_metal_env_int("GGML_METAL_FA_FORCE_VEC", -1);
+    if (force_vec >= 0) {
+        if (force_vec == 0) {
+            return false;
+        }
+
+        const bool allow_d72_f16kv =
+                ne00 == 72 &&
+                op->src[1]->type == GGML_TYPE_F16 &&
+                op->src[2]->type == GGML_TYPE_F16 &&
+                (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16);
+
+        return allow_d72_f16kv || (ne00 % 32 == 0);
+    }
+
     // use vec kernel if the batch size is small and if the head size is supported
     return (ne01 < 20) && (ne00 % 32 == 0);
 }
@@ -2669,13 +2692,15 @@ size_t ggml_metal_op_flash_attn_ext_extra_tmp(const ggml_tensor * op) {
     // note: always reserve the temp buffer to avoid graph reallocations
     //if (ggml_metal_op_flash_attn_ext_use_vec(op)) {
     if (true) {
-        const int64_t nwg = 32;
-        const int64_t ne01_max = std::min(ne01, 32);
+        const bool is_vec = ggml_metal_op_flash_attn_ext_use_vec(op);
+        const int64_t env_nwg = ggml_metal_env_int("GGML_METAL_FA_VEC_NWG", -1);
+        const int64_t nwg = is_vec ? (env_nwg > 0 ? env_nwg : 32) : 32;
+        const int64_t ne01_tmp = is_vec ? ne01 : std::min<int64_t>(ne01, 32);
 
         // temp buffer for writing the results from each workgroup
         // - ne20: the size of the Value head
         // -  + 2: the S and M values for each intermediate result
-        res += ggml_type_size(GGML_TYPE_F32)*(ne01_max*ne02*ne03*nwg*(ne20 + 2));
+        res += ggml_type_size(GGML_TYPE_F32)*(ne01_tmp*ne02*ne03*nwg*(ne20 + 2));
     }
 
     return res;
@@ -2702,7 +2727,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
 
     GGML_ASSERT(ne00 % 4 == 0);
 
-    GGML_ASSERT(op->src[0]->type == GGML_TYPE_F32);
+    GGML_ASSERT(op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16 || op->src[0]->type == GGML_TYPE_BF16);
     GGML_ASSERT(op->src[1]->type == op->src[2]->type);
 
     //GGML_ASSERT(ggml_are_same_shape (src1, src2));
@@ -3005,6 +3030,17 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
             nsg = 1;
             while (2*nwg*nsg*ncpsg < ne11 && nsg < 4) {
                 nsg *= 2;
+            }
+        }
+
+        {
+            const int env_nsg = ggml_metal_env_int("GGML_METAL_FA_VEC_NSG", -1);
+            const int env_nwg = ggml_metal_env_int("GGML_METAL_FA_VEC_NWG", -1);
+            if (env_nsg > 0) {
+                nsg = env_nsg;
+            }
+            if (env_nwg > 0) {
+                nwg = env_nwg;
             }
         }
 

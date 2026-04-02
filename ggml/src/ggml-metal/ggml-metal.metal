@@ -6439,7 +6439,8 @@ template<
     short DV,       // V head size
     short NE = 4,   // head elements per thread
     short Q  = OP_FLASH_ATTN_EXT_VEC_NQPSG,  // queries per threadgroup
-    short C  = OP_FLASH_ATTN_EXT_VEC_NCPSG>  // cache items per threadgroup
+    short C  = OP_FLASH_ATTN_EXT_VEC_NCPSG,  // cache items per threadgroup
+    bool QF32 = false>
 kernel void kernel_flash_attn_ext_vec(
         constant ggml_metal_kargs_flash_attn_ext_vec & args,
         device const char * q,
@@ -6453,8 +6454,8 @@ kernel void kernel_flash_attn_ext_vec(
         uint3   tgpig[[threadgroup_position_in_grid]],
         ushort  tiisg[[thread_index_in_simdgroup]],
         ushort  sgitg[[simdgroup_index_in_threadgroup]]) {
-    static_assert(DK % 32 == 0, "DK must be divisible by 32");
-    static_assert(DV % 32 == 0, "DV must be divisible by 32");
+    static_assert(DK % 4 == 0, "DK must be divisible by 4");
+    static_assert(DV % 4 == 0, "DV must be divisible by 4");
 
 #define NWG  (FC_flash_attn_ext_vec_nwg)
 #define NSG  (FC_flash_attn_ext_vec_nsg)
@@ -6507,14 +6508,24 @@ kernel void kernel_flash_attn_ext_vec(
     }
 
     // load heads from Q to shared memory
-    device const float4 * q4 = (device const float4 *) ((device const char *) q);
-
     if (iq1 < args.ne01) {
-        for (short i = tiisg; i < PK4; i += NW) {
-            if (i < DK4) {
-                sq4[i] = (q4_t) q4[i];
-            } else {
-                sq4[i] = (q4_t) 0.0f;
+        if constexpr (QF32) {
+            device const float4 * q4 = (device const float4 *) ((device const char *) q);
+            for (short i = tiisg; i < PK4; i += NW) {
+                if (i < DK4) {
+                    sq4[i] = (q4_t) q4[i];
+                } else {
+                    sq4[i] = (q4_t) 0.0f;
+                }
+            }
+        } else {
+            device const q4_t * q4 = (device const q4_t *) ((device const char *) q);
+            for (short i = tiisg; i < PK4; i += NW) {
+                if (i < DK4) {
+                    sq4[i] = (q4_t) q4[i];
+                } else {
+                    sq4[i] = (q4_t) 0.0f;
+                }
             }
         }
     }
@@ -6914,6 +6925,9 @@ template [[host_name("kernel_flash_attn_ext_vec_q4_1_dk64_dv64")]]   kernel flas
 template [[host_name("kernel_flash_attn_ext_vec_q5_0_dk64_dv64")]]   kernel flash_attn_ext_vec_t kernel_flash_attn_ext_vec<FA_TYPES,     block_q5_0, 8, dequantize_q5_0_t4, block_q5_0,  8, dequantize_q5_0_t4, 64, 64, 2>;
 template [[host_name("kernel_flash_attn_ext_vec_q5_1_dk64_dv64")]]   kernel flash_attn_ext_vec_t kernel_flash_attn_ext_vec<FA_TYPES,     block_q5_1, 8, dequantize_q5_1_t4, block_q5_1,  8, dequantize_q5_1_t4, 64, 64, 2>;
 template [[host_name("kernel_flash_attn_ext_vec_q8_0_dk64_dv64")]]   kernel flash_attn_ext_vec_t kernel_flash_attn_ext_vec<FA_TYPES,     block_q8_0, 8, dequantize_q8_0_t4, block_q8_0,  8, dequantize_q8_0_t4, 64, 64, 2>;
+
+template [[host_name("kernel_flash_attn_ext_vec_f16_dk72_dv72")]]      kernel flash_attn_ext_vec_t kernel_flash_attn_ext_vec<FA_TYPES, half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4, 72, 72, 16>;
+template [[host_name("kernel_flash_attn_ext_vec_qf32_f16_dk72_dv72")]] kernel flash_attn_ext_vec_t kernel_flash_attn_ext_vec<FA_TYPES, half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4, 72, 72, 16, OP_FLASH_ATTN_EXT_VEC_NQPSG, OP_FLASH_ATTN_EXT_VEC_NCPSG, true>;
 
 template [[host_name("kernel_flash_attn_ext_vec_f32_dk96_dv96")]]    kernel flash_attn_ext_vec_t kernel_flash_attn_ext_vec<FA_TYPES_F32, float4,     1, dequantize_f32_t4,  float4,      1, dequantize_f32_t4,  96, 96, 4>;
 template [[host_name("kernel_flash_attn_ext_vec_f16_dk96_dv96")]]    kernel flash_attn_ext_vec_t kernel_flash_attn_ext_vec<FA_TYPES,     half4,      1, dequantize_f16_t4,  half4,       1, dequantize_f16_t4,  96, 96, 4>;

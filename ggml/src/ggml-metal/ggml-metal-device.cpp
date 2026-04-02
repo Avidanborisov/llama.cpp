@@ -1384,9 +1384,21 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_v
     const int32_t ns10 = op->src[1]->nb[1]/op->src[1]->nb[0];
     const int32_t ns20 = op->src[2]->nb[1]/op->src[2]->nb[0];
 
+    const char * kernel_name = nullptr;
+
+    if (op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F16) {
+        kernel_name = "qf32_f16";
+    } else if (op->src[0]->type == GGML_TYPE_F16 && op->src[1]->type == GGML_TYPE_F16) {
+        kernel_name = "f16";
+    } else if (op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F32) {
+        kernel_name = "f32";
+    } else {
+        kernel_name = ggml_type_name(op->src[1]->type);
+    }
+
     snprintf(base, 256, "kernel_%s_%s_dk%d_dv%d",
             "flash_attn_ext_vec",
-            ggml_type_name(op->src[1]->type),
+            kernel_name,
             dk,
             dv);
 
