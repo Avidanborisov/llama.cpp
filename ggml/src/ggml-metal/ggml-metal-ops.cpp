@@ -2697,11 +2697,18 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
 
     if (!ggml_metal_op_flash_attn_ext_use_vec(op)) {
         // half8x8 kernel
-        const int nqptg = OP_FLASH_ATTN_EXT_NQPSG; // queries per threadgroup
+        int nqptg = OP_FLASH_ATTN_EXT_NQPSG; // queries per threadgroup
         const int ncpsg = OP_FLASH_ATTN_EXT_NCPSG; // cache values per simdgroup
 
         // use f16 Q kernel when query tensor is f16 (reduces Q bandwidth)
+        // enable with GGML_METAL_FA_F16Q=1
         const bool use_f16q = (op->src[0]->type == GGML_TYPE_F16) && ggml_metal_env_flag("GGML_METAL_FA_F16Q");
+
+        // tile-16: process 16 queries per threadgroup to halve threadgroup count
+        // enable with GGML_METAL_FA_T16=1 (requires f16 KV and dk <= 128)
+        if (op->src[1]->type == GGML_TYPE_F16 && ne00 <= 128 && ggml_metal_env_flag("GGML_METAL_FA_T16")) {
+            nqptg = OP_FLASH_ATTN_EXT_NQPSG_16;
+        }
 
         GGML_ASSERT(nqptg <= 32);
         GGML_ASSERT(nqptg  % 8  == 0);
@@ -2809,7 +2816,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
 
         // simdgroups per threadgroup (a.k.a. warps)
         //nsg = ne01 <= nqptg ? MAX(4, MIN(nsgmax, MIN(ne11/ncpsg, (int64_t) pipeline.maxTotalThreadsPerThreadgroup/32))) : 4;
-        int32_t nsg = ne00 >= 512 ? 8 : 4;
+        int32_t nsg = (nqptg == OP_FLASH_ATTN_EXT_NQPSG_16 || ne00 >= 512) ? 8 : 4;
 
         const size_t smem = FATTN_SMEM(nsg);
 
@@ -2848,7 +2855,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
             /*.logit_softcap =*/ logit_softcap,
         };
 
-        auto pipeline = ggml_metal_library_get_pipeline_flash_attn_ext(lib, op, has_mask, has_sinks, has_bias, has_scap, has_kvpad, nsg, use_f16q);
+        auto pipeline = ggml_metal_library_get_pipeline_flash_attn_ext(lib, op, has_mask, has_sinks, has_bias, has_scap, has_kvpad, nsg, use_f16q, nqptg);
 
         ggml_metal_encoder_set_pipeline(enc, pipeline);
         ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
