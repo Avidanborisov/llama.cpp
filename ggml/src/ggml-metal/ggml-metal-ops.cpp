@@ -2692,7 +2692,16 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
 
         // tile-16: process 16 queries per threadgroup for f16 KV with dk <= 128
         if (op->src[1]->type == GGML_TYPE_F16 && ne00 <= 128) {
-            nqptg = OP_FLASH_ATTN_EXT_NQPSG_16;
+            // allow env var override for benchmarking (8, 16, 24, 32)
+            static int nqptg_override = -1;
+            if (nqptg_override == -1) {
+                const char * env = getenv("GGML_METAL_FA_TILE");
+                nqptg_override = env ? atoi(env) : OP_FLASH_ATTN_EXT_NQPSG_16;
+                if (nqptg_override % 8 != 0 || nqptg_override < 8 || nqptg_override > 32) {
+                    nqptg_override = OP_FLASH_ATTN_EXT_NQPSG_16;
+                }
+            }
+            nqptg = nqptg_override;
         }
 
         GGML_ASSERT(nqptg <= 32);
@@ -2801,7 +2810,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
 
         // simdgroups per threadgroup (a.k.a. warps)
         //nsg = ne01 <= nqptg ? MAX(4, MIN(nsgmax, MIN(ne11/ncpsg, (int64_t) pipeline.maxTotalThreadsPerThreadgroup/32))) : 4;
-        int32_t nsg = (nqptg == OP_FLASH_ATTN_EXT_NQPSG_16 || ne00 >= 512) ? 8 : 4;
+        int32_t nsg = (nqptg > OP_FLASH_ATTN_EXT_NQPSG || ne00 >= 512) ? 8 : 4;
 
         const size_t smem = FATTN_SMEM(nsg);
 

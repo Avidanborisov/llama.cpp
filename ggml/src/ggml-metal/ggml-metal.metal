@@ -6321,6 +6321,32 @@ template [[host_name("kernel_flash_attn_ext_f16_dk96_dv96_t16"  )]]  kernel flas
 template [[host_name("kernel_flash_attn_ext_f16_dk112_dv112_t16")]]  kernel flash_attn_ext_t16_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  112, 112, OP_FLASH_ATTN_EXT_NQPSG_16>;
 template [[host_name("kernel_flash_attn_ext_f16_dk128_dv128_t16")]]  kernel flash_attn_ext_t16_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  128, 128, OP_FLASH_ATTN_EXT_NQPSG_16>;
 
+// tile-24: process 24 queries per threadgroup (Q=24) for f16 KV with dk <= 128
+typedef decltype(kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16, 64, 64, OP_FLASH_ATTN_EXT_NQPSG_24>) flash_attn_ext_t24_t;
+
+template [[host_name("kernel_flash_attn_ext_f16_dk32_dv32_t24"  )]]  kernel flash_attn_ext_t24_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  32,  32, OP_FLASH_ATTN_EXT_NQPSG_24>;
+template [[host_name("kernel_flash_attn_ext_f16_dk40_dv40_t24"  )]]  kernel flash_attn_ext_t24_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  40,  40, OP_FLASH_ATTN_EXT_NQPSG_24>;
+template [[host_name("kernel_flash_attn_ext_f16_dk48_dv48_t24"  )]]  kernel flash_attn_ext_t24_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  48,  48, OP_FLASH_ATTN_EXT_NQPSG_24>;
+template [[host_name("kernel_flash_attn_ext_f16_dk64_dv64_t24"  )]]  kernel flash_attn_ext_t24_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  64,  64, OP_FLASH_ATTN_EXT_NQPSG_24>;
+template [[host_name("kernel_flash_attn_ext_f16_dk72_dv72_t24"  )]]  kernel flash_attn_ext_t24_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  72,  72, OP_FLASH_ATTN_EXT_NQPSG_24>;
+template [[host_name("kernel_flash_attn_ext_f16_dk80_dv80_t24"  )]]  kernel flash_attn_ext_t24_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  80,  80, OP_FLASH_ATTN_EXT_NQPSG_24>;
+template [[host_name("kernel_flash_attn_ext_f16_dk96_dv96_t24"  )]]  kernel flash_attn_ext_t24_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  96,  96, OP_FLASH_ATTN_EXT_NQPSG_24>;
+template [[host_name("kernel_flash_attn_ext_f16_dk112_dv112_t24")]]  kernel flash_attn_ext_t24_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  112, 112, OP_FLASH_ATTN_EXT_NQPSG_24>;
+template [[host_name("kernel_flash_attn_ext_f16_dk128_dv128_t24")]]  kernel flash_attn_ext_t24_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  128, 128, OP_FLASH_ATTN_EXT_NQPSG_24>;
+
+// tile-32: process 32 queries per threadgroup (Q=32) for f16 KV with dk <= 128
+typedef decltype(kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16, 64, 64, OP_FLASH_ATTN_EXT_NQPSG_32>) flash_attn_ext_t32_t;
+
+template [[host_name("kernel_flash_attn_ext_f16_dk32_dv32_t32"  )]]  kernel flash_attn_ext_t32_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  32,  32, OP_FLASH_ATTN_EXT_NQPSG_32>;
+template [[host_name("kernel_flash_attn_ext_f16_dk40_dv40_t32"  )]]  kernel flash_attn_ext_t32_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  40,  40, OP_FLASH_ATTN_EXT_NQPSG_32>;
+template [[host_name("kernel_flash_attn_ext_f16_dk48_dv48_t32"  )]]  kernel flash_attn_ext_t32_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  48,  48, OP_FLASH_ATTN_EXT_NQPSG_32>;
+template [[host_name("kernel_flash_attn_ext_f16_dk64_dv64_t32"  )]]  kernel flash_attn_ext_t32_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  64,  64, OP_FLASH_ATTN_EXT_NQPSG_32>;
+template [[host_name("kernel_flash_attn_ext_f16_dk72_dv72_t32"  )]]  kernel flash_attn_ext_t32_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  72,  72, OP_FLASH_ATTN_EXT_NQPSG_32>;
+template [[host_name("kernel_flash_attn_ext_f16_dk80_dv80_t32"  )]]  kernel flash_attn_ext_t32_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  80,  80, OP_FLASH_ATTN_EXT_NQPSG_32>;
+template [[host_name("kernel_flash_attn_ext_f16_dk96_dv96_t32"  )]]  kernel flash_attn_ext_t32_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  96,  96, OP_FLASH_ATTN_EXT_NQPSG_32>;
+template [[host_name("kernel_flash_attn_ext_f16_dk112_dv112_t32")]]  kernel flash_attn_ext_t32_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  112, 112, OP_FLASH_ATTN_EXT_NQPSG_32>;
+template [[host_name("kernel_flash_attn_ext_f16_dk128_dv128_t32")]]  kernel flash_attn_ext_t32_t kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16,  128, 128, OP_FLASH_ATTN_EXT_NQPSG_32>;
+
 #if defined(GGML_METAL_HAS_BF16)
 template [[host_name("kernel_flash_attn_ext_bf16_dk32_dv32"  )]] kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES_BF, bfloat4x4,  1, dequantize_bf16, bfloat4x4,  1, dequantize_bf16, 32,  32>;
 template [[host_name("kernel_flash_attn_ext_bf16_dk40_dv40"  )]] kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES_BF, bfloat4x4,  1, dequantize_bf16, bfloat4x4,  1, dequantize_bf16, 40,  40>;

@@ -1327,7 +1327,7 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext(
             ggml_type_name(op->src[1]->type),
             dk,
             dv,
-            nqptg == OP_FLASH_ATTN_EXT_NQPSG_16 ? "_t16" : "");
+            nqptg == 32 ? "_t32" : nqptg == 24 ? "_t24" : nqptg == 16 ? "_t16" : "");
 
     snprintf(name, 256, "%s_mask=%d_sinks=%d_bias=%d_scap=%d_kvpad=%d_bcm=%d_ns10=%d_ns20=%d_nsg=%d",
             base,
