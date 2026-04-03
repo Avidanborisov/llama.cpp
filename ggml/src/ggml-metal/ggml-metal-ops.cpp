@@ -2691,8 +2691,10 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
         const int ncpsg = OP_FLASH_ATTN_EXT_NCPSG; // cache values per simdgroup
 
         // each threadgroup loads K/V from device memory once; widen the Q tile
-        // to amortize those loads when KV is f16 and head dim fits comfortably
-        if (op->src[1]->type == GGML_TYPE_F16 && ne00 <= 128) {
+        // to amortize those loads when KV is f16 and head dim fits comfortably.
+        // ne00 > 64 ensures PAD(ne00, 64) >= 128, so the V accumulation loop
+        // in the kernel has NO = PV8/NSG >= 2 when using 8 simdgroups.
+        if (op->src[1]->type == GGML_TYPE_F16 && ne00 > 64 && ne00 <= 128) {
             nqptg = OP_FLASH_ATTN_EXT_NQPSG_KV_REUSE;
         }
 
@@ -2802,7 +2804,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
 
         // simdgroups per threadgroup (a.k.a. warps)
         //nsg = ne01 <= nqptg ? MAX(4, MIN(nsgmax, MIN(ne11/ncpsg, (int64_t) pipeline.maxTotalThreadsPerThreadgroup/32))) : 4;
-        int32_t nsg = ne00 >= 512 ? 8 : 4;
+        int32_t nsg = (nqptg == OP_FLASH_ATTN_EXT_NQPSG_KV_REUSE || ne00 >= 512) ? 8 : 4;
 
         const size_t smem = FATTN_SMEM(nsg);
 
