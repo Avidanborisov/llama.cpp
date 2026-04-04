@@ -2691,7 +2691,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
                 op->src[1]->type == GGML_TYPE_F16 &&
                 ne00 > 64 &&
                 ne00 <= 128;
-        const int nqptg = OP_FLASH_ATTN_EXT_NQPSG; // queries per threadgroup
+        const int nqptg = is_f16_mid_head ? OP_FLASH_ATTN_EXT_NQPSG_16 : OP_FLASH_ATTN_EXT_NQPSG; // queries per threadgroup
         const int ncpsg = OP_FLASH_ATTN_EXT_NCPSG; // cache values per simdgroup
 
         GGML_ASSERT(nqptg <= 32);
